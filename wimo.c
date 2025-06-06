@@ -8,6 +8,7 @@
 #include <io.h>
 #include <errno.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 
 // #define UNICODE
 // #define _UNICODE
@@ -16,6 +17,44 @@
 static FILE *g_csv = NULL;
 static CRITICAL_SECTION g_csv_lock;
 static HANDLE g_stop_event = NULL;
+
+static ULONGLONG filetime_to_ull(const FILETIME *ft)
+{
+    return ((ULONGLONG)ft->dwHighDateTime << 32) | ft->dwLowDateTime;
+}
+
+static ULONGLONG wimo_uptime_seconds(void)
+{
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snap == INVALID_HANDLE_VALUE) return 0;
+
+    PROCESSENTRY32W pe = { .dwSize = sizeof(pe) };
+    ULONGLONG secs = 0;
+
+    if (Process32FirstW(snap, &pe)) {
+        do {
+            if (WIDE_MATCH(pe.szExeFile, L"wimo.exe")) {         
+                HANDLE hp = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                         FALSE, pe.th32ProcessID);
+                if (hp) {
+                    FILETIME ftCreate, ftExit, ftKernel, ftUser, ftNow;
+                    if (GetProcessTimes(hp, &ftCreate, &ftExit,
+                                        &ftKernel, &ftUser)) {
+                        GetSystemTimeAsFileTime(&ftNow);
+                        ULONGLONG diff100ns =
+                            filetime_to_ull(&ftNow) - filetime_to_ull(&ftCreate);
+                        secs = diff100ns / 10000000ULL;          
+                    }
+                    CloseHandle(hp);
+                }
+                break;                                           
+            }
+        } while (Process32NextW(snap, &pe));
+    }
+
+    CloseHandle(snap);
+    return secs;
+}
 
 void init_csv(void) {
     InitializeCriticalSection(&g_csv_lock);
@@ -135,8 +174,6 @@ wchar_t* extract_field(const wchar_t* input, const wchar_t* separator, int expec
 }
 
 const wchar_t* get_clean_title(const wchar_t* exe_name, const wchar_t* original_title) {
-    wprintf(L"Exe: %ls\n", exe_name);
-    
     if (WIDE_MATCH(exe_name, L"Code.exe")) {
         return extract_field(original_title, L" - ", 2, 1);
     } else if (WIDE_MATCH(exe_name, L"chrome.exe")) {
@@ -279,6 +316,29 @@ int wmain(int argc, wchar_t* argv[]) {
         CloseHandle(hThread);
         CloseHandle(g_stop_event);
         close_csv();
+
+        return 0;
+    } else if (wcscmp(argv[1], L"status") == 0) {
+        HANDLE evt = OpenEventW(SYNCHRONIZE, FALSE, L"Global\\WimoStopEvent");
+        
+        if (!evt) {
+            wprintf(L"wimo.exe is NOT running.\n");
+            return 0;
+        }
+
+        CloseHandle(evt);
+
+        ULONGLONG s = wimo_uptime_seconds();
+
+        if (s == 0) {
+            wprintf(L"wimo.exe is running (uptime unknown).\n");
+        } else {
+            int h = (int) (s / 3600);
+            int m = (int) ((s % 3600) / 60);
+            int sec = (int) (s % 60);
+
+            wprintf(L"wimo.exe is running for %02d:%02d:%02d (hh:mm:ss)\n", h, m, sec);
+        }
 
         return 0;
     }
