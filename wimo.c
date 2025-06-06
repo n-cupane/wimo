@@ -9,14 +9,48 @@
 #include <errno.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
+#include <ctype.h>
 
 // #define UNICODE
 // #define _UNICODE
 #define WIDE_MATCH(str, val) (wcscmp((str), (val)) == 0)
 
+typedef struct Row {
+    wchar_t       *title;
+    double         seconds;
+    struct Row    *next;
+} Row;
+
 static FILE *g_csv = NULL;
 static CRITICAL_SECTION g_csv_lock;
 static HANDLE g_stop_event = NULL;
+static char g_csv_name[MAX_PATH] = "";
+
+static void add_or_accumulate(Row **head, const wchar_t *title, double sec)
+{
+    for (Row *p = *head; p; p = p->next) {
+        if (wcscmp(p->title, title) == 0) {
+            p->seconds += sec;
+            return;
+        }
+    }
+    /* non trovato: crea nuovo nodo */
+    Row *n   = calloc(1, sizeof(*n));
+    n->title = _wcsdup(title);
+    n->seconds = sec;
+    n->next  = *head;
+    *head    = n;
+}
+
+static void free_rows(Row *head)
+{
+    while (head) {
+        Row *tmp = head->next;
+        free(head->title);
+        free(head);
+        head = tmp;
+    }
+}
 
 static ULONGLONG filetime_to_ull(const FILETIME *ft)
 {
@@ -56,17 +90,73 @@ static ULONGLONG wimo_uptime_seconds(void)
     return secs;
 }
 
+void aggregate_csv(const char *filename)
+{
+    /* 1. leggi e accumula ------------------------------------------------ */
+    FILE *in = fopen(filename, "r, ccs=UTF-8");
+    if (!in) return;
+
+    Row *list = NULL;
+    wchar_t line[1024];
+
+    /* salta header */
+    fgetws(line, 1024, in);
+
+    while (fgetws(line, 1024, in)) {
+        /* trovare la virgola fuori dalle virgolette */
+        int in_q = 0;
+        wchar_t *comma = NULL;
+        for (wchar_t *p = line; *p; ++p) {
+            if (*p == L'"') in_q = !in_q;
+            else if (*p == L',' && !in_q) { comma = p; break; }
+        }
+        if (!comma) continue;                       /* riga malformata */
+
+        *comma = L'\0';
+        const wchar_t *title  = line;
+        const wchar_t *secstr = comma + 1;
+
+        /* rimuovi CR/LF e spazi finali */
+        wchar_t *end = (wchar_t*)secstr + wcslen(secstr);
+        while (end > secstr && iswspace(end[-1])) --end;
+        *end = L'\0';
+
+        double sec = wcstod(secstr, NULL);
+
+        /* togli eventuali "" esterne dal titolo */
+        if (title[0] == L'"') {
+            ++title;
+            wchar_t *q = wcsrchr((wchar_t*)title, L'"');
+            if (q) *q = L'\0';
+        }
+
+        add_or_accumulate(&list, title, sec);
+    }
+    fclose(in);
+
+    /* 2. riscrivi il file ------------------------------------------------- */
+    FILE *out = fopen(filename, "w, ccs=UTF-8");
+    if (!out) { free_rows(list); return; }
+
+    fwprintf(out, L"Window title,Seconds\n");
+
+    for (Row *p = list; p; p = p->next)
+        fwprintf(out, L"%ls,%.2f\n", p->title, p->seconds);
+
+    fclose(out);
+    free_rows(list);
+}
+
 void init_csv(void) {
     InitializeCriticalSection(&g_csv_lock);
 
     SYSTEMTIME st;
     GetLocalTime(&st);
 
-    char filename[MAX_PATH];
-    sprintf(filename, "%04d%02d%02d.csv", st.wYear, st.wMonth, st.wDay);
+    sprintf(g_csv_name, "%04d%02d%02d.csv", st.wYear, st.wMonth, st.wDay);
 
-    if (_access(filename, 0) == -1) {                 /* il file non esiste   */
-        FILE *tmp = fopen(filename, "w, ccs=UTF-8");  /* stream wide-oriented */
+    if (_access(g_csv_name, 0) == -1) {                 /* il file non esiste   */
+        FILE *tmp = fopen(g_csv_name, "w, ccs=UTF-8");  /* stream wide-oriented */
         if (!tmp) {
             perror("fopen-create");
             return;
@@ -78,7 +168,7 @@ void init_csv(void) {
         fclose(tmp);
     }
 
-    g_csv = fopen(filename, "a, ccs=UTF-8");
+    g_csv = fopen(g_csv_name, "a, ccs=UTF-8");
     if (!g_csv) {
         perror("fopen-append");
         return;
@@ -316,6 +406,7 @@ int wmain(int argc, wchar_t* argv[]) {
         CloseHandle(hThread);
         CloseHandle(g_stop_event);
         close_csv();
+        aggregate_csv(g_csv_name);
 
         return 0;
     } else if (wcscmp(argv[1], L"status") == 0) {
