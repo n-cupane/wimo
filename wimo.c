@@ -7,11 +7,15 @@
 #include <string.h>
 #include <io.h>
 #include <errno.h>
+#include <shellapi.h>
 
+// #define UNICODE
+// #define _UNICODE
 #define WIDE_MATCH(str, val) (wcscmp((str), (val)) == 0)
 
 static FILE *g_csv = NULL;
 static CRITICAL_SECTION g_csv_lock;
+static HANDLE g_stop_event = NULL;
 
 void init_csv(void) {
     InitializeCriticalSection(&g_csv_lock);
@@ -131,8 +135,12 @@ wchar_t* extract_field(const wchar_t* input, const wchar_t* separator, int expec
 }
 
 const wchar_t* get_clean_title(const wchar_t* exe_name, const wchar_t* original_title) {
+    wprintf(L"Exe: %ls\n", exe_name);
+    
     if (WIDE_MATCH(exe_name, L"Code.exe")) {
         return extract_field(original_title, L" - ", 2, 1);
+    } else if (WIDE_MATCH(exe_name, L"chrome.exe")) {
+        return _wcsdup(L"Google Chrome");
     } else {
         return original_title;
     }
@@ -184,41 +192,96 @@ void update_stats(HWND hwnd, ULONGLONG delta_ms) {
 DWORD WINAPI poller(void* _) {
     HWND last = NULL;
     ULONGLONG t0 = GetTickCount64();
+
     for (;;) {
+        DWORD wait = WaitForSingleObject(g_stop_event, 1000);
+        if (wait == WAIT_OBJECT_0)
+            break;
+
         HWND h = GetForegroundWindow();
         if (h && h != last) {                      // cambio finestra
             ULONGLONG now = GetTickCount64();
             if (last) update_stats(last, now - t0); // accredita delta
             last = h;
             t0 = now;
-            // get_window_info(h);
         }
-        Sleep(1000); // poll ogni secondo
     }
+
+    if (last) {
+        ULONGLONG now = GetTickCount64();
+        update_stats(last, now - t0);
+    }
+
     return 0;
 }
 
-int main() {
-    printf("Avvio monitoraggio delle finestre attive...\n");
-
-    init_csv();
-
-    // Avvio del thread
-    HANDLE hThread = CreateThread(NULL, 0, poller, NULL, 0, NULL);
-    if (!hThread) {
-        fprintf(stderr, "Errore nella creazione del thread\n");
-        return 1;
+int wmain(int argc, wchar_t* argv[]) {
+    if (argc == 1) {
+        argv[1] = L"run";
+        argc = 2;
     }
 
-    // Il main thread resta vivo per permettere al thread di polling di lavorare
-    // Puoi sostituire questa parte con un messaggio di uscita o altro meccanismo
-    printf("Premi INVIO per uscire.\n");
-    getchar();
+    if (wcscmp(argv[1], L"start") == 0) {
+        HANDLE evt = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Global\\WimoStopEvent");
 
-    // Terminazione pulita (non obbligatoria qui, ma buona pratica)
-    TerminateThread(hThread, 0);
-    CloseHandle(hThread);
-    close_csv();
+        if (evt) {
+            wprintf(L"wimo.exe is already running\n");
+            CloseHandle(evt);
+            return 0;
+        }
 
+        wchar_t self[MAX_PATH];
+        GetModuleFileNameW(NULL, self, MAX_PATH);
+        wchar_t cmd[MAX_PATH + 10];
+        swprintf(cmd, _countof(cmd), L"\"%s\" run", self);
+
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
+
+        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            wprintf(L"wimo.exe started in background.\n");
+        } else {
+            fwprintf(stderr, L"CreateProcess failed (%lu)\n", GetLastError());
+        }
+
+        return 0;
+    } else if (wcscmp(argv[1], L"stop") == 0) {
+        HANDLE evt = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Global\\WimoStopEvent");
+
+        if (!evt) {
+            wprintf(L"wimo.exe is not running.\n");
+            return 0;
+        }
+
+        SetEvent(evt);
+        CloseHandle(evt);
+        wprintf(L"Stop request sent.\n");
+        return 0;
+    } else if (wcscmp(argv[1], L"run") == 0) {
+        g_stop_event = CreateEventW(NULL, TRUE, FALSE, L"Global\\WimoStopEvent");
+
+        if (!g_stop_event) {
+            fwprintf(stderr, L"Unable to create stop event (%lu)\n", GetLastError());
+            return 1;
+        }
+
+        init_csv();
+        HANDLE hThread = CreateThread(NULL, 0, poller, NULL, 0, NULL);
+        if (!hThread) {
+            fprintf(stderr, "Error creating thread\n");
+            return 1;
+        }
+
+        WaitForSingleObject(hThread, INFINITE);
+
+        CloseHandle(hThread);
+        CloseHandle(g_stop_event);
+        close_csv();
+
+        return 0;
+    }
+    
     return 0;
 }
