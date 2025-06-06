@@ -1,17 +1,25 @@
-#include <stdio.h>
-#include <wchar.h>
 #include "csv.h"
 #include "window.h"
 #include "monitor.h"
+#include <stdio.h>
+#include <wchar.h>
 #include <windows.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
+#include <fcntl.h>
+#include <io.h>
+#include <Windows.h>
+
 
 // #define UNICODE
 // #define _UNICODE
 #define WIDE_MATCH(str, val) (wcscmp((str), (val)) == 0)
 
 int wmain(int argc, wchar_t* argv[]) {
+    SetConsoleOutputCP(CP_UTF8);                 /* stdout UTF-8      */
+    _setmode(_fileno(stdout), _O_U16TEXT);       /* wide → UTF-16LE   */
+
+
     if (argc == 1) {
         argv[1] = L"run";
         argc = 2;
@@ -73,6 +81,8 @@ int wmain(int argc, wchar_t* argv[]) {
 
         return 0;
     } else if (wcscmp(argv[1], L"status") == 0) {
+        csv_prepare_today_name();
+
         HANDLE evt = OpenEventW(SYNCHRONIZE, FALSE, L"Global\\WimoStopEvent");
         
         if (!evt) {
@@ -81,6 +91,11 @@ int wmain(int argc, wchar_t* argv[]) {
         }
 
         CloseHandle(evt);
+
+        csv_aggregate_today();
+
+        wprintf(L"\n--- Today log ---\n");
+        csv_dump_today();
 
         ULONGLONG s = win_uptime_seconds(L"wimo.exe");
         if (s == 0) {

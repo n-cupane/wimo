@@ -44,6 +44,15 @@ static void free_rows(Row *head)
     }
 }
 
+static void sec_to_hms(double secs, wchar_t buf[16])
+{
+    unsigned tot = (unsigned)(secs + 0.5);          /* arrotonda */
+    unsigned h = tot / 3600;
+    unsigned m = (tot % 3600) / 60;
+    unsigned s = tot % 60;
+    swprintf(buf, 16, L"%02u:%02u:%02u", h, m, s);  /*  HH:MM:SS */
+}
+
 const char *csv_get_filename(void) {
     return g_csv_name;
 }
@@ -188,4 +197,79 @@ void aggregate_csv(const char *filename)
 
 void csv_aggregate_today(void) {
     if (*g_csv_name) aggregate_csv(g_csv_name);
+}
+
+void csv_dump_today(void)
+{
+    if (!*g_csv_name) return;
+
+    /* prima passata: trova la larghezza massima del titolo */
+    size_t maxw = 0;
+    {
+        FILE *fp = fopen(g_csv_name, "r, ccs=UTF-8");
+        if (!fp) return;
+
+        wchar_t line[1024];
+        fgetws(line, 1024, fp);               /* salta header */
+        while (fgetws(line, 1024, fp)) {
+            int in_q = 0; wchar_t *comma = NULL;
+            for (wchar_t *p = line; *p; ++p) {
+                if (*p == L'"') in_q = !in_q;
+                else if (*p == L',' && !in_q) { comma = p; break; }
+            }
+            if (!comma) continue;
+            *comma = L'\0';
+            size_t w = wcslen(line);
+            if (w > maxw) maxw = w;
+        }
+        fclose(fp);
+    }
+    if (maxw < 12) maxw = 12;                 /* minimo estetico */
+
+    /* seconda passata: stampa in tabella */
+    FILE *fp = fopen(g_csv_name, "r, ccs=UTF-8");
+    if (!fp) return;
+
+    wchar_t line[1024], hms[16];
+    fgetws(line, 1024, fp);                   /* salta header */
+
+    /* intestazione */
+    wprintf(L"%-*ls │ %ls\n", (int)maxw, L"Window title", L"Time");
+    wprintf(L"%.*ls─┼─%.*ls\n",
+            (int)maxw, L"────────────────────────────────────────────────────────",
+            8, L"────────");
+
+    while (fgetws(line, 1024, fp)) {
+        int in_q = 0; wchar_t *comma = NULL;
+        for (wchar_t *p = line; *p; ++p) {
+            if (*p == L'"') in_q = !in_q;
+            else if (*p == L',' && !in_q) { comma = p; break; }
+        }
+        if (!comma) continue;
+
+        *comma = L'\0';
+        const wchar_t *title  = line;
+        const wchar_t *secstr = comma + 1;
+        double secs = wcstod(secstr, NULL);
+
+        /* HH:MM:SS */
+        unsigned tot = (unsigned)(secs + 0.5);
+        unsigned h = tot / 3600;
+        unsigned m = (tot % 3600) / 60;
+        unsigned s = tot % 60;
+        swprintf(hms, 16, L"%02u:%02u:%02u", h, m, s);
+
+        wprintf(L"%-*ls │ %ls\n", (int)maxw, title, hms);
+    }
+    fclose(fp);
+}
+
+
+void csv_prepare_today_name(void)
+{
+    if (*g_csv_name) return;         /* già pronto */
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    sprintf(g_csv_name, "%04d%02d%02d.csv", st.wYear, st.wMonth, st.wDay);
 }
