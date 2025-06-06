@@ -1,4 +1,5 @@
 #include "csv.h"
+#include "config.h"
 #include <windows.h>
 #include <io.h>
 #include <stdio.h>
@@ -104,10 +105,13 @@ void csv_write_field(FILE *fp, const char *s)
 void csv_init(void) {
     InitializeCriticalSection(&g_csv_lock);
 
+    const char *base = cfg_get_output();
+    if (!*base) base = ".";
+
     SYSTEMTIME st;
     GetLocalTime(&st);
 
-    sprintf(g_csv_name, "%04d%02d%02d.csv", st.wYear, st.wMonth, st.wDay);
+    sprintf(g_csv_name, "%s/%04d%02d%02d.csv", base, st.wYear, st.wMonth, st.wDay);
 
     if (_access(g_csv_name, 0) == -1) {                 /* il file non esiste   */
         FILE *tmp = fopen(g_csv_name, "w, ccs=UTF-8");  /* stream wide-oriented */
@@ -268,7 +272,10 @@ void csv_prepare_today_name(void)
 {
     if (*g_csv_name) return;         /* già pronto */
 
+    const char *base = cfg_get_output();
+    if (!*base) base = ".";
+
     SYSTEMTIME st;
     GetLocalTime(&st);
-    sprintf(g_csv_name, "%04d%02d%02d.csv", st.wYear, st.wMonth, st.wDay);
+    sprintf(g_csv_name, "%s/%04d%02d%02d.csv", base, st.wYear, st.wMonth, st.wDay);
 }

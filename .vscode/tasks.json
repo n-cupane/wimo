@@ -17,6 +17,7 @@
         "csv.c",
         "window.c",
         "monitor.c",
+        "config.c",
 
         "-o", "wimo.exe",
 

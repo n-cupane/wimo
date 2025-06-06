@@ -1,6 +1,7 @@
 #include "csv.h"
 #include "window.h"
 #include "monitor.h"
+#include "config.h"
 #include <stdio.h>
 #include <wchar.h>
 #include <windows.h>
@@ -19,13 +20,34 @@ int wmain(int argc, wchar_t* argv[]) {
     SetConsoleOutputCP(CP_UTF8);                 /* stdout UTF-8      */
     _setmode(_fileno(stdout), _O_U16TEXT);       /* wide → UTF-16LE   */
 
+    cfg_load();
+
 
     if (argc == 1) {
         argv[1] = L"run";
         argc = 2;
     }
 
-    if (wcscmp(argv[1], L"start") == 0) {
+    if (wcscmp(argv[1], L"config") == 0) {
+        if (argc == 2)
+            print_config();
+
+        if (argc >= 3) {
+            if (wcscmp(argv[2], L"output") == 0) {
+                if (argc < 4) {
+                    wprintf(L"%hs\n", cfg_get_output());
+                    return 0;
+                } else if (argc == 4) {
+                    if (cfg_set_output(argv[3]))
+                        wprintf(L"Output directory set to \"%ls\"\n", argv[3]);
+                    else
+                        wprintf(L"Unable to write .wimoconfig\n");
+                
+                    return 0;
+                }
+            }
+        }
+    } else if (wcscmp(argv[1], L"start") == 0) {
         HANDLE evt = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Global\\WimoStopEvent");
 
         if (evt) {
