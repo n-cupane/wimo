@@ -1,6 +1,13 @@
 {
     "files.associations": {
-        "patterns.h": "c"
+        "patterns.h": "c",
+        "window.h": "c",
+        "ctype.h": "c",
+        "tlhelp32.h": "c",
+        "windows.h": "c",
+        "wchar.h": "c",
+        "psapi.h": "c",
+        "shlwapi.h": "c"
     },
     "C_Cpp.errorSquiggles": "disabled"
 }
