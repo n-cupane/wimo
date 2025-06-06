@@ -256,8 +256,7 @@ void csv_dump_today(void)
         unsigned tot = (unsigned)(secs + 0.5);
         unsigned h = tot / 3600;
         unsigned m = (tot % 3600) / 60;
-        unsigned s = tot % 60;
-        swprintf(hms, 16, L"%02u:%02u:%02u", h, m, s);
+        swprintf(hms, 16, L"%02u:%02u", h, m);
 
         wprintf(L"%-*ls │ %ls\n", (int)maxw, title, hms);
     }
