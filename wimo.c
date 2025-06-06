@@ -5,37 +5,84 @@
 #include <wchar.h>
 #include <stdlib.h>
 #include <string.h>
+#include <io.h>
+#include <errno.h>
 
 #define WIDE_MATCH(str, val) (wcscmp((str), (val)) == 0)
 
-#if !defined(_MSC_VER) && (__STDC_VERSION__ < 202311L && !defined(_POSIX_C_SOURCE) && !defined(_XOPEN_SOURCE) && !defined(wcsdup))
-wchar_t *wcsdup_custom(const wchar_t *s) {
-    if (s == NULL) return NULL;
-    size_t len = wcslen(s) + 1; 
-    wchar_t *d = (wchar_t *)malloc(len * sizeof(wchar_t));
-    if (d == NULL) return NULL; 
-    memcpy(d, s, len * sizeof(wchar_t)); 
-    return d;
-}
-#define WCSDUP_TO_USE wcsdup_custom
-#elif defined(_MSC_VER)
-#define WCSDUP_TO_USE _wcsdup
-#else
-#define WCSDUP_TO_USE wcsdup
-#endif
+static FILE *g_csv = NULL;
+static CRITICAL_SECTION g_csv_lock;
 
-// Funzione di utilità: ottiene il titolo della finestra
-void print_window_title(HWND hwnd) {
-    char title[256];
-    GetWindowTextA(hwnd, title, sizeof(title));
-    printf(" -> Finestra: \"%s\"\n", title);
+void init_csv(void) {
+    InitializeCriticalSection(&g_csv_lock);
+
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+
+    char filename[MAX_PATH];
+    sprintf(filename, "%04d%02d%02d.csv", st.wYear, st.wMonth, st.wDay);
+
+    if (_access(filename, 0) == -1) {                 /* il file non esiste   */
+        FILE *tmp = fopen(filename, "w, ccs=UTF-8");  /* stream wide-oriented */
+        if (!tmp) {
+            perror("fopen-create");
+            return;
+        }
+
+        if (fwprintf(tmp, L"Window title,Seconds\n") < 0)   /* wide! */
+            perror("fwprintf-header");
+
+        fclose(tmp);
+    }
+
+    g_csv = fopen(filename, "a, ccs=UTF-8");
+    if (!g_csv) {
+        perror("fopen-append");
+        return;
+    }
 }
 
-// Simulazione della funzione update_stats
-void update_stats(HWND hwnd, ULONGLONG delta_ms) {
-    char title[256];
-    GetWindowTextA(hwnd, title, sizeof(title));
-    printf("[INFO] Tempo su \"%s\": %.2f secondi\n", title, delta_ms / 1000.0);
+void close_csv(void)
+{
+    if (g_csv) {
+        fclose(g_csv);
+        g_csv = NULL;
+    }
+    DeleteCriticalSection(&g_csv_lock);
+}
+
+void csv_write_field_w(FILE *fp, const wchar_t *ws)
+{
+    int quote = 0;
+    for (const wchar_t *p = ws; *p; ++p)
+        if (*p == L',' || *p == L'"' || *p == L'\n' || *p == L'\r')
+            { quote = 1; break; }
+
+    if (quote) fputwc(L'"', fp);
+
+    for (const wchar_t *p = ws; *p; ++p) {
+        if (*p == L'"') fputwc(L'"', fp);   /* raddoppia le " interne  */
+        fputwc(*p, fp);
+    }
+
+    if (quote) fputwc(L'"', fp);
+}
+
+void csv_write_field(FILE *fp, const char *s)
+{
+    int quote = 0;
+    for (const char *p = s; *p; ++p)
+        if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r')
+            { quote = 1; break; }
+
+    if (quote) fputc('"', fp);
+
+    for (const char *p = s; *p; ++p) {
+        if (*p == '"') fputc('"', fp);  /* raddoppia le " interne  */
+        fputc(*p, fp);
+    }
+
+    if (quote) fputc('"', fp);
 }
 
 wchar_t* extract_field(const wchar_t* input, const wchar_t* separator, int expected_separators, int field_index) {
@@ -56,7 +103,7 @@ wchar_t* extract_field(const wchar_t* input, const wchar_t* separator, int expec
     }
 
     const wchar_t* start = input;
-    wchar_t* end = NULL;
+    const wchar_t* end = NULL;
 
     for (int i = 0; i <= field_index; i++) {
         end = wcsstr(start, separator);
@@ -83,7 +130,7 @@ wchar_t* extract_field(const wchar_t* input, const wchar_t* separator, int expec
     return result;
 }
 
-wchar_t* get_clean_title(const wchar_t* exe_name, const wchar_t* original_title) {
+const wchar_t* get_clean_title(const wchar_t* exe_name, const wchar_t* original_title) {
     if (WIDE_MATCH(exe_name, L"Code.exe")) {
         return extract_field(original_title, L" - ", 2, 1);
     } else {
@@ -91,64 +138,7 @@ wchar_t* get_clean_title(const wchar_t* exe_name, const wchar_t* original_title)
     }
 }
 
-// wchar_t* get_clean_title(const wchar_t* exe_name, const wchar_t* original_title) {
-//     // È buona norma che le stringhe di input non modificate siano const.
-//     // La funzione restituisce una NUOVA stringa allocata, che il chiamante deve liberare.
-
-//     if (original_title == NULL) {
-//         return NULL; // Non si può fare nulla con un titolo nullo
-//     }
-//     if (exe_name == NULL) {
-//         // Se exe_name è nullo, comportati come nel caso default: restituisci una copia dell'originale.
-//         return WCSDUP_TO_USE(original_title);
-//     }
-
-//     if (wcscmp(exe_name, L"Code.exe") == 0) {
-//         // Ci aspettiamo il formato "QUALCOSA - PARTE_DESIDERATA - VISUAL STUDIO CODE" (o simile)
-//         // Vogliamo estrarre PARTE_DESIDERATA.
-
-//         wchar_t* title_copy = WCSDUP_TO_USE(original_title); // Crea una copia modificabile per wcstok_s
-//         if (!title_copy) {
-//             return NULL; // Fallimento dell'allocazione
-//         }
-
-//         wchar_t* context = NULL; // Puntatore di contesto per wcstok_s
-//         const wchar_t* delimiter = L" - "; // Delimitatore usato per "splittare"
-//         wchar_t* result_str_to_return = NULL;
-
-//         // Estrai la prima parte (QUALCOSA)
-//         wchar_t* token1 = wcstok_s(title_copy, delimiter, &context);
-//         if (token1) {
-//             // Estrai la seconda parte (PARTE_DESIDERATA)
-//             wchar_t* token2 = wcstok_s(NULL, delimiter, &context);
-//             if (token2) {
-//                 // Controlla se esiste una terza parte (VISUAL STUDIO CODE) per confermare il formato
-//                 wchar_t* token3 = wcstok_s(NULL, delimiter, &context);
-//                 if (token3) {
-//                     // Formato "token1 - token2 - token3" confermato.
-//                     // Vogliamo token2. Duplichiamolo perché title_copy verrà liberato.
-//                     result_str_to_return = WCSDUP_TO_USE(token2);
-//                 }
-//                 // Se non ci sono 3 parti (es. solo "token1 - token2"),
-//                 // result_str_to_return rimane NULL, e si passerà al comportamento di default.
-//             }
-//         }
-
-//         free(title_copy); // Libera la copia temporanea usata per la tokenizzazione
-
-//         if (result_str_to_return) {
-//             return result_str_to_return; // Restituisci la parte desiderata duplicata (il chiamante la libera)
-//         }
-//         // Se il parsing specifico per "Code.exe" non è riuscito a estrarre
-//         // la parte desiderata nel formato atteso, si passa al comportamento di default.
-//     }
-    
-//     // Caso default: per qualsiasi altro exe_name, o se il parsing per "Code.exe" non ha prodotto un risultato specifico.
-//     // Restituisci una copia duplicata del titolo originale.
-//     return WCSDUP_TO_USE(original_title); // Il chiamante deve liberare questa stringa.
-// }
-
-void print_window_info(HWND h) {
+wchar_t* get_window_title(HWND h) {
     wchar_t title[256], exe[256];
 
     GetWindowTextW(h, title, 256);
@@ -162,19 +152,32 @@ void print_window_info(HWND h) {
         PathStripPathW(exe);
         CloseHandle(p);
     } else {
-        wcscpy(exe, L"(accesso negato)");
+        exe[0] = L'\0';
     }
 
-    wchar_t* clean_title = get_clean_title(exe, title);
+    const wchar_t *clean = get_clean_title(exe, title);   
+                                                          
+    wchar_t *dup = _wcsdup(clean);                        
+    if (clean != title) free((void*)clean);               
 
-    if (clean_title != NULL) {
-        wcscpy(title, clean_title);
-        free(clean_title);
+    return dup;   /* il chiamante deve fare free() */
+}
+
+// Simulazione della funzione update_stats
+void update_stats(HWND hwnd, ULONGLONG delta_ms) {
+    wchar_t* title = get_window_title(hwnd);
+
+    if (title && g_csv) {
+        EnterCriticalSection(&g_csv_lock);
+
+        csv_write_field_w(g_csv, title);
+        fwprintf(g_csv, L",%.2f\n", delta_ms / 1000.0);
+
+        fflush(g_csv);
+        LeaveCriticalSection(&g_csv_lock);
     }
 
-    wprintf(L"[INFO] Finestra attiva: \"%s\" | Processo: %s\n", title, exe);
-
-
+    free(title);
 }
 
 // Thread che monitora la finestra attiva
@@ -188,8 +191,7 @@ DWORD WINAPI poller(void* _) {
             if (last) update_stats(last, now - t0); // accredita delta
             last = h;
             t0 = now;
-            // print_window_title(h);
-            print_window_info(h);
+            // get_window_info(h);
         }
         Sleep(1000); // poll ogni secondo
     }
@@ -198,6 +200,8 @@ DWORD WINAPI poller(void* _) {
 
 int main() {
     printf("Avvio monitoraggio delle finestre attive...\n");
+
+    init_csv();
 
     // Avvio del thread
     HANDLE hThread = CreateThread(NULL, 0, poller, NULL, 0, NULL);
@@ -214,6 +218,7 @@ int main() {
     // Terminazione pulita (non obbligatoria qui, ma buona pratica)
     TerminateThread(hThread, 0);
     CloseHandle(hThread);
+    close_csv();
 
     return 0;
 }
