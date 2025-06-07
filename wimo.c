@@ -17,6 +17,7 @@
 // #define _UNICODE
 #define WIDE_MATCH(str, val) (wcscmp((str), (val)) == 0)
 
+void print_usage(void);
 int is_valid_year(const wchar_t *year);
 int is_valid_month(const wchar_t *month);
 
@@ -26,10 +27,9 @@ int wmain(int argc, wchar_t* argv[]) {
 
     cfg_load();
 
-
     if (argc == 1) {
-        argv[1] = L"run";
-        argc = 2;
+        print_usage();
+        return 0;
     }
 
     if (wcscmp(argv[1], L"config") == 0) {
@@ -67,7 +67,7 @@ int wmain(int argc, wchar_t* argv[]) {
         HANDLE evt = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Global\\WimoStopEvent");
 
         if (evt) {
-            wprintf(L"wimo.exe is already running\n");
+            wprintf(L"wimo is already running\n");
             CloseHandle(evt);
             return 0;
         }
@@ -83,7 +83,7 @@ int wmain(int argc, wchar_t* argv[]) {
         if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, DETACHED_PROCESS, NULL, NULL, &si, &pi)) {
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
-            wprintf(L"wimo.exe started in background.\n");
+            wprintf(L"wimo started in background.\n");
         } else {
             fwprintf(stderr, L"CreateProcess failed (%lu)\n", GetLastError());
         }
@@ -93,7 +93,7 @@ int wmain(int argc, wchar_t* argv[]) {
         HANDLE evt = OpenEventW(EVENT_MODIFY_STATE, FALSE, L"Global\\WimoStopEvent");
 
         if (!evt) {
-            wprintf(L"wimo.exe is not running.\n");
+            wprintf(L"wimo is not running.\n");
             return 0;
         }
 
@@ -125,7 +125,7 @@ int wmain(int argc, wchar_t* argv[]) {
             HANDLE evt = OpenEventW(SYNCHRONIZE, FALSE, L"Global\\WimoStopEvent");
             
             if (!evt) {
-                wprintf(L"wimo.exe is NOT running.\n");
+                wprintf(L"wimo is NOT running.\n");
                 return 0;
             }
 
@@ -138,13 +138,13 @@ int wmain(int argc, wchar_t* argv[]) {
 
             ULONGLONG s = win_uptime_seconds(L"wimo.exe");
             if (s == 0) {
-                wprintf(L"wimo.exe is running (uptime unknown).\n");
+                wprintf(L"wimo is running (uptime unknown).\n");
             } else {
                 int h = (int) (s / 3600);
                 int m = (int) ((s % 3600) / 60);
                 int sec = (int) (s % 60);
 
-                wprintf(L"wimo.exe is running for %02d:%02d:%02d (hh:mm:ss)\n", h, m, sec);
+                wprintf(L"wimo has been running for %02d:%02d:%02d (hh:mm:ss)\n", h, m, sec);
             }
         } else if (argc == 3) {
             const wchar_t *dash = wcschr(argv[2], L'-');
@@ -178,11 +178,24 @@ int wmain(int argc, wchar_t* argv[]) {
         }
 
         return 0;
-    } else if (wcscmp(argv[1], L"export") == 0) {
-
+    } else {
+        wprintf(L"\nUnrecognized command '%ls'\n", argv[1]);
+        print_usage();
     }
     
     return 0;
+}
+
+void print_usage(void) {
+    wprintf(L"\nUsage: wimo [command] [args]\n\n");
+
+    wprintf(L"Commands:\n");
+    wprintf(L"  start               Start the monitoring in background\n");
+    wprintf(L"  stop                Stop the background monitoring\n");
+    wprintf(L"  status [yyyy-MM]    Show status; optionally show log for given month\n");
+    wprintf(L"  config              Show current config\n");
+    wprintf(L"  config output [dir] Show or set output directory\n");
+    wprintf(L"  config export [dir] Show or set export directory\n");
 }
 
 int is_valid_year(const wchar_t *year) {
