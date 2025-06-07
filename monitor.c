@@ -46,7 +46,9 @@ void update_stats(HWND hwnd, ULONGLONG delta_ms) {
     wchar_t* title = win_get_title(hwnd);
 
     if (title) {
-        csv_record(title, delta_ms / 1000.0);
+        if (title[0] != L'\0') {
+            csv_record(title, delta_ms / 1000.0);
+        }
         free(title);
     }
 }
