@@ -14,7 +14,7 @@
 #>
 
 # Versione da scaricare; cambia solo questa per le release future
-$WimoVersion = "v1.0.0-alpha"
+$WimoVersion = "v1.0.0-alpha.1"
 
 # Costruisco dinamicamente l’URL
 $DownloadUrl = "https://github.com/n-cupane/wimo/releases/download/$WimoVersion/wimo.exe"
@@ -97,5 +97,4 @@ if ($paths -contains $installDir) {
 Write-Host ""
 Write-Host "=== Installazione completata con successo! ==="
 Write-Host "Per rendere immediatamente effettive le modifiche alla variabile PATH,"
-Write-Host "puoi chiudere tutte le finestre PowerShell/CMD aperte e riaprirne una nuova,"
-Write-Host "oppure eseguire: `& { $Env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') }`."
+Write-Host "puoi chiudere tutte le finestre PowerShell/CMD aperte e riaprirne una nuova."
