@@ -2,15 +2,22 @@
 #include <windows.h>
 #include <stdio.h>
 #include <string.h>
+#include <shlobj.h>
 
 static char g_output[MAX_PATH] = "";
 static char g_export[MAX_PATH] = "";
 
 static void get_cfg_filename(char *buf)
 {
-    GetModuleFileNameA(NULL, buf, MAX_PATH);
-    char *p = strrchr(buf, '\\');
-    strcpy(p ? p + 1 : buf, ".wimoconfig");
+    char appdata[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, appdata))) {
+        snprintf(buf, MAX_PATH, "%s\\wimo", appdata);
+        CreateDirectoryA(buf, NULL);
+
+        strcat(buf, "\\.wimoconfig");
+    } else {
+        wprintf(L"Unable to access LOCALAPPDATA\n");
+    }
 }
 
 static int rewrite_config_file(void)
@@ -59,7 +66,23 @@ void cfg_load(void)
     get_cfg_filename(fname);
 
     FILE *fp = fopen(fname, "r");
-    if (!fp) return;
+    if (!fp) {
+        char localapp[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localapp))) {
+            snprintf(g_output, MAX_PATH, "%s\\wimo\\output", localapp);
+            snprintf(g_export, MAX_PATH, "%s\\wimo\\export", localapp);
+
+            CreateDirectoryA(g_output, NULL);
+            CreateDirectoryA(g_export, NULL);
+
+            char wimo_base[MAX_PATH];
+            snprintf(wimo_base, MAX_PATH, "%s\\wimo", localapp);
+            CreateDirectoryA(wimo_base, NULL);
+        }
+
+        rewrite_config_file();
+        return;
+    }
 
     char line[512];
     while (fgets(line, sizeof line, fp)) {
